@@ -14,12 +14,12 @@ pipeline {
 
     stages {
 
-        stage('Checkout Code') {
+        /* stage('Checkout Code') {
             steps {
                 git branch: 'main',
                     url: 'https://github.com/erdigu/vehicle-service.git'
             }
-        }
+        } */
 
         stage('Build JAR (Maven)') {
             steps {
