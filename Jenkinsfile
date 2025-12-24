@@ -7,23 +7,34 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME      = "erdigvijay/devops_repo:vehicle-service-${BUILD_NUMBER}"
-        K8S_NAMESPACE   = "automotive"
-        DEPLOYMENT_NAME = "vehicle-service"
+        IMAGE_NAME          = "erdigvijay/devops_repo:vehicle-service-${BUILD_NUMBER}"
+        K8S_NAMESPACE       = "automotive"
+        DEPLOYMENT_NAME     = "vehicle-service"
+        AWS_DEFAULT_REGION  = "us-east-1"
+        // SONAR_TOKEN = credentials('sonar-jenkins-token')
     }
 
     stages {
 
-        /* stage('Checkout Code') {
-            steps {
-                git branch: 'main',
-                    url: 'https://github.com/erdigu/vehicle-service.git'
-            }
-        } */
-
         stage('Build JAR (Maven)') {
             steps {
                 sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
             }
         }
 
@@ -43,8 +54,7 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                        echo "$DOCKER_PASS" | docker login \
-                        -u "$DOCKER_USER" --password-stdin
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                     '''
                 }
             }
@@ -58,27 +68,34 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh """
-                    kubectl apply -f vehicle-service.yaml
-                    kubectl set image deployment/${DEPLOYMENT_NAME} \
-                        vehicle-service=${IMAGE_NAME} \
-                        -n ${K8S_NAMESPACE}
-                """
-            }
-        }
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-creds-4eks',
+                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
+                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
+                ]]) {
+                    script {
+                        echo "Updating kubeconfig..."
+                        sh "aws eks update-kubeconfig --name automotive-cluster --region $AWS_DEFAULT_REGION"
 
-        stage('Verify Rollout') {
-            steps {
-                sh """
-                    kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE}
-                    kubectl get pods -n ${K8S_NAMESPACE} -l app=vehicle-service
-                """
+                        echo "Applying Kubernetes manifests..."
+                        sh "kubectl apply -f vehicle-service.yaml"
+
+                        echo "Updating deployment image..."
+                        sh "kubectl set image deployment/${DEPLOYMENT_NAME} vehicle-service=${IMAGE_NAME} -n ${K8S_NAMESPACE}"
+
+                        echo "Waiting for rollout to complete..."
+                        sh "kubectl rollout status deployment/${DEPLOYMENT_NAME} -n ${K8S_NAMESPACE}"
+
+                        echo "Deployment successful. Current pods:"
+                        sh "kubectl get pods -n ${K8S_NAMESPACE} -l app=vehicle-service"
+                    }
+                }
             }
         }
     }
 
     post {
-
         success {
             emailext(
                 subject: "✅ SUCCESS: ${JOB_NAME} #${BUILD_NUMBER}",
@@ -89,10 +106,7 @@ pipeline {
                     <p><b>Build Number:</b> ${BUILD_NUMBER}</p>
                     <p><b>Status:</b> SUCCESS</p>
                     <p><b>Docker Image:</b> ${IMAGE_NAME}</p>
-                    <p>
-                        <b>Build URL:</b>
-                        <a href="${BUILD_URL}">${BUILD_URL}</a>
-                    </p>
+                    <p><b>Build URL:</b> <a href="${BUILD_URL}">${BUILD_URL}</a></p>
                 """,
                 to: "erdigvijaypatil01@gmail.com"
             )
@@ -107,10 +121,7 @@ pipeline {
                     <p><b>Job:</b> ${JOB_NAME}</p>
                     <p><b>Build Number:</b> ${BUILD_NUMBER}</p>
                     <p><b>Status:</b> FAILED</p>
-                    <p>
-                        <b>Console Output:</b>
-                        <a href="${BUILD_URL}">${BUILD_URL}</a>
-                    </p>
+                    <p><b>Console Output:</b> <a href="${BUILD_URL}">${BUILD_URL}</a></p>
                 """,
                 to: "erdigvijaypatil01@gmail.com"
             )

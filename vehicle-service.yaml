@@ -13,6 +13,8 @@ spec:
       labels:
         app: vehicle-service
     spec:
+      imagePullSecrets:
+        - name: dockerhub-secret
       containers:
         - name: vehicle-service
           image: erdigvijay/devops_repo:vehicle-service:PLACEHOLDER
